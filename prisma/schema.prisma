@@ -384,9 +384,11 @@ model BroadcastRecipient {
   jid             String
   status          String       @default("pending") // pending, sent, failed
   error           String?      @db.Text
+  messageId       String?      // WhatsApp message key id, used to match later delivery errors
   sentAt          DateTime?
 
   broadcastLog    BroadcastLog @relation(fields: [broadcastLogId], references: [id], onDelete: Cascade)
 
   @@index([broadcastLogId])
+  @@index([messageId])
 }

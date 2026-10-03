@@ -175,26 +175,32 @@ export const bindSessionStore = (sock: WASocket, sessionId: string, io: Server |
                 const keyId = update.key?.id;
                 if (!keyId) continue;
 
-                const statusMap: Record<number, string> = {
-                    0: 'PENDING',
-                    1: 'SENT',
-                    2: 'DELIVERED',
-                    3: 'READ',
-                    4: 'READ', // Played
-                };
+                // Updates without a status (edits, reactions, etc.) must not reset it
+                const rawStatus = update.update?.status;
+                if (rawStatus === undefined || rawStatus === null) continue;
 
-                const status = statusMap[update.update?.status || 0] || 'PENDING';
+                const status = mapWAStatus(rawStatus);
+                const errorCode = status === 'FAILED'
+                    ? String(update.update?.messageStubParameters?.[0] ?? 'unknown')
+                    : undefined;
+                const error = errorCode ? { code: errorCode, reason: describeAckError(errorCode) } : undefined;
 
                 await prisma.message.updateMany({
                     where: { sessionId: dbSessionId, keyId },
                     data: { status: status as any }
                 });
 
+                if (error) {
+                    logger.warn("Store", `Message ${keyId} to ${update.key?.remoteJid} rejected by WhatsApp (${error.code}): ${error.reason}`);
+                    await markBroadcastRecipientFailed(keyId, `${error.code}: ${error.reason}`);
+                }
+
                 // Dispatch webhook for message status update
                 dispatchWebhook(sessionId, "message.status", {
                     keyId,
                     remoteJid: update.key?.remoteJid,
-                    status
+                    status,
+                    ...(error ? { error } : {})
                 });
             } catch (e) {
                 logger.error("Store", "Error updating message status", e);
@@ -572,3 +578,56 @@ async function processAndSaveMessage(
     }
 }
 // Placeholder - verified that I need to find the logic first
+
+
+/**
+ * Map Baileys/WhatsApp message status (proto.WebMessageInfo.Status) to our DB enum.
+ * ERROR=0, PENDING=1, SERVER_ACK=2, DELIVERY_ACK=3, READ=4, PLAYED=5
+ */
+function mapWAStatus(status: number): 'FAILED' | 'PENDING' | 'SENT' | 'DELIVERED' | 'READ' {
+    switch (status) {
+        case 0: return 'FAILED';
+        case 1: return 'PENDING';
+        case 2: return 'SENT';
+        case 3: return 'DELIVERED';
+        default: return 'READ'; // READ (4), PLAYED (5)
+    }
+}
+
+/** Human-readable reason for WhatsApp ack error codes */
+function describeAckError(code: string): string {
+    switch (code) {
+        case '463':
+            return 'Account restricted: WhatsApp is blocking this number from starting new chats (existing chats still work)';
+        case '479':
+            return 'Rejected by server: stale device session or malformed addressing';
+        default:
+            return 'Message rejected by WhatsApp';
+    }
+}
+
+/** If the failed message belongs to a broadcast, flip that recipient from sent to failed */
+async function markBroadcastRecipientFailed(messageId: string, error: string) {
+    try {
+        const recipient = await prisma.broadcastRecipient.findFirst({
+            where: { messageId },
+            select: { id: true, status: true, broadcastLogId: true }
+        });
+        if (!recipient || recipient.status === 'failed') return;
+
+        await prisma.broadcastRecipient.update({
+            where: { id: recipient.id },
+            data: { status: 'failed', error }
+        });
+        const [sent, failed] = await Promise.all([
+            prisma.broadcastRecipient.count({ where: { broadcastLogId: recipient.broadcastLogId, status: 'sent' } }),
+            prisma.broadcastRecipient.count({ where: { broadcastLogId: recipient.broadcastLogId, status: 'failed' } })
+        ]);
+        await prisma.broadcastLog.update({
+            where: { id: recipient.broadcastLogId },
+            data: { sent, failed }
+        });
+    } catch (e) {
+        logger.error("Store", "Error marking broadcast recipient as failed", e);
+    }
+}

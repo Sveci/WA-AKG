@@ -88,13 +88,13 @@ export async function POST(
                 const jid = recipients[i];
                 try {
                     const targetJid = await resolveRecipientJid(instance.socket!, jid);
-                    await instance.socket!.sendMessage(targetJid, messageContent);
+                    const sendResult = await instance.socket!.sendMessage(targetJid, messageContent);
                     sent++;
 
-                    // Update recipient status in DB
+                    // Update recipient status in DB (messageId lets late WhatsApp errors flip it to failed)
                     await prisma.broadcastRecipient.updateMany({
                         where: { broadcastLogId: broadcastId, jid },
-                        data: { status: "sent", sentAt: new Date() }
+                        data: { status: "sent", sentAt: new Date(), messageId: sendResult?.key?.id ?? null }
                     });
                 } catch (e: any) {
                     failed++;
@@ -113,7 +113,7 @@ export async function POST(
                 // Update BroadcastLog progress in DB
                 await prisma.broadcastLog.update({
                     where: { id: broadcastId },
-                    data: { sent, failed }
+                    data: await countRecipients(broadcastId)
                 });
 
                 // Socket real-time
@@ -140,7 +140,7 @@ export async function POST(
             // Mark as completed in DB
             await prisma.broadcastLog.update({
                 where: { id: broadcastId },
-                data: { status: "completed", sent, failed, completedAt: new Date() }
+                data: { status: "completed", ...(await countRecipients(broadcastId)), completedAt: new Date() }
             });
 
             // Final socket emit
@@ -169,4 +169,16 @@ export async function POST(
         console.error("Broadcast error", e);
         return NextResponse.json({ status: false, message: "Failed to start broadcast", error: "Failed to start broadcast" }, { status: 500 });
     }
+}
+
+/**
+ * Count sent/failed from recipient rows instead of in-memory counters, so
+ * recipients later flipped to "failed" by a WhatsApp ack error stay counted.
+ */
+async function countRecipients(broadcastLogId: string) {
+    const [sent, failed] = await Promise.all([
+        prisma.broadcastRecipient.count({ where: { broadcastLogId, status: "sent" } }),
+        prisma.broadcastRecipient.count({ where: { broadcastLogId, status: "failed" } })
+    ]);
+    return { sent, failed };
 }
