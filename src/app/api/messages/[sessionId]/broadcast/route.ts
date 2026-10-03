@@ -2,6 +2,7 @@ import { NextResponse, NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { waManager } from "@/modules/whatsapp/manager";
 import { getAuthenticatedUser, canAccessSession } from "@/lib/api-auth";
+import { resolveRecipientJid } from "@/lib/jid-utils";
 import type { AnyMessageContent } from "@whiskeysockets/baileys";
 import { z } from "zod";
 
@@ -86,7 +87,8 @@ export async function POST(
             for (let i = 0; i < recipients.length; i++) {
                 const jid = recipients[i];
                 try {
-                    await instance.socket!.sendMessage(jid, messageContent);
+                    const targetJid = await resolveRecipientJid(instance.socket!, jid);
+                    await instance.socket!.sendMessage(targetJid, messageContent);
                     sent++;
 
                     // Update recipient status in DB

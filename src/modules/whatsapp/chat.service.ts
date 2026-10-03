@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { normalizeJid } from "@/lib/jid-utils";
+import { normalizeJid, resolveRecipientJid } from "@/lib/jid-utils";
 import { waManager } from "@/modules/whatsapp/manager";
 import { onMessageSent } from "@/lib/webhook";
 import Sticker from "wa-sticker-formatter";
@@ -318,6 +318,7 @@ export class ChatService {
             options.quoted = quotedOption;
         }
 
+        jid = await resolveRecipientJid(instance.socket, jid);
         const sendResult = await instance.socket.sendMessage(jid, msgPayload, options);
 
         // Fire webhook for sent message (non-blocking)
@@ -406,6 +407,7 @@ export class ChatService {
             content = { document: buffer, mimetype, fileName, ...messageOptions };
         }
 
+        jid = await resolveRecipientJid(instance.socket, jid);
         const sendResult = await instance.socket.sendMessage(jid, content);
 
         // Fire webhook for sent media message (non-blocking)
