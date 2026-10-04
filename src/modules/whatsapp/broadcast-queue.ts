@@ -114,7 +114,7 @@ function recipientToEntry(r: BroadcastRecipientInput): { jid: string; variables?
 }
 
 /** Phone-number JID variants (with/without Brazilian 9th digit) used to look up chat history */
-function phoneJidVariants(input: string): string[] {
+export function phoneJidVariants(input: string): string[] {
     if (/@(g\.us|lid|broadcast|newsletter)$/.test(input)) return [input];
     const digits = normalizePhoneDigits(input);
     if (!digits) return [];

@@ -30,6 +30,13 @@ app.prepare().then(() => {
       if (!req.url) return;
       const parsedUrl = parse(req.url, true);
 
+      // MCP endpoint for AI attendants (authenticates and checks scopes per tool itself)
+      if (parsedUrl.pathname === "/api/mcp") {
+        const { handleMcpRequest } = await import("../modules/mcp/server");
+        await handleMcpRequest(req, res);
+        return;
+      }
+
       // Per-integration API keys: enforce scopes and session limits before any route runs
       const apiKey = req.headers["x-api-key"];
       if (typeof apiKey === "string" && apiKey.startsWith(API_KEY_PREFIX) && parsedUrl.pathname?.startsWith("/api/")) {

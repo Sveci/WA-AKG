@@ -28,8 +28,10 @@ export class ChatService {
             content: string | null;
             timestamp: Date;
             type: string;
+            fromMe: boolean | number;
+            keyId: string;
         }>>(`
-            SELECT m1.remoteJid, m1.content, m1.timestamp, m1.type
+            SELECT m1.remoteJid, m1.content, m1.timestamp, m1.type, m1.fromMe, m1.keyId
             FROM \`Message\` m1
             INNER JOIN (
                 SELECT remoteJid, MAX(timestamp) as max_ts
@@ -82,7 +84,9 @@ export class ChatService {
                     timestamp: msg.timestamp instanceof Date
                         ? msg.timestamp.toISOString()
                         : String(msg.timestamp),
-                    type: msg.type
+                    type: msg.type,
+                    fromMe: !!msg.fromMe,
+                    keyId: msg.keyId
                 }
             });
         }
