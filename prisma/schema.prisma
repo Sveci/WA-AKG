@@ -217,6 +217,28 @@ model Webhook {
   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   session     Session? @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   logs        WebhookLog[]
+  deliveries  WebhookDelivery[]
+}
+
+/// Outbox: one row per event per webhook, retried with backoff until delivered or out of attempts
+model WebhookDelivery {
+  id             String    @id @default(cuid())
+  webhookId      String
+  event          String
+  payload        Json
+  status         String    @default("pending") // pending, delivering, delivered, failed
+  attempts       Int       @default(0)
+  nextAttemptAt  DateTime  @default(now())
+  lastStatusCode Int?
+  lastError      String?   @db.Text
+  createdAt      DateTime  @default(now())
+  deliveredAt    DateTime?
+
+  webhook        Webhook   @relation(fields: [webhookId], references: [id], onDelete: Cascade)
+
+  @@index([status, nextAttemptAt])
+  @@index([webhookId, createdAt])
+  @@index([webhookId, status])
 }
 
 // Webhook delivery logs — tracks every webhook request attempt
@@ -232,6 +254,8 @@ model WebhookLog {
   responseBody       String?  @db.Text
   responseTimeMs     Int?
   errorMessage       String?  @db.Text
+  deliveryId         String?  // WebhookDelivery this attempt belongs to
+  attempt            Int?     // attempt number for that delivery (1 = first try)
   createdAt          DateTime @default(now())
 
   webhook            Webhook  @relation(fields: [webhookId], references: [id], onDelete: Cascade)
