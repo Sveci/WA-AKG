@@ -150,7 +150,8 @@ function buildServer(ctx: Ctx) {
         // Fetch extra rows so filters still return up to `limit`
         const chats = await ChatService.getChatsList(session.id, Math.min(limit * 5, 500), undefined, args.search);
         return chats
-            .filter(c => !c.jid.endsWith("@broadcast") && !c.jid.endsWith("@newsletter"))
+            // Skip status/channels and WhatsApp's own system account (0@s.whatsapp.net)
+            .filter(c => !c.jid.endsWith("@broadcast") && !c.jid.endsWith("@newsletter") && !c.jid.startsWith("0@"))
             .filter(c => args.includeGroups || !c.jid.endsWith("@g.us"))
             .filter(c => !args.onlyAwaitingReply || !c.lastMessage.fromMe)
             .slice(0, limit)
