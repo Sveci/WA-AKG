@@ -1,17 +1,34 @@
 import { NextResponse, NextRequest } from "next/server";
-import { prisma } from "@/lib/prisma";
-import { waManager } from "@/modules/whatsapp/manager";
 import { getAuthenticatedUser, canAccessSession } from "@/lib/api-auth";
-import { resolveRecipientJid } from "@/lib/jid-utils";
-import type { AnyMessageContent } from "@whiskeysockets/baileys";
+import { createBroadcastCampaign } from "@/modules/whatsapp/broadcast-queue";
 import { z } from "zod";
 
-const broadcastBodySchema = z.object({
-    recipients: z.array(z.string()),
-    message: z.string().min(1),
-    delay: z.number().optional()
-});
+const recipientSchema = z.union([
+    z.string().min(1),
+    z.object({
+        jid: z.string().optional(),
+        phone: z.string().optional(),
+        number: z.string().optional(),
+        variables: z.record(z.string(), z.string()).optional()
+    }).refine(r => !!(r.jid || r.phone || r.number), { message: "recipient needs jid, phone or number" })
+]);
 
+const broadcastBodySchema = z.object({
+    recipients: z.array(recipientSchema).min(1),
+    message: z.string().default(""),
+    media: z.object({
+        type: z.enum(["image", "video", "document"]),
+        url: z.string().url(),
+        fileName: z.string().optional()
+    }).optional(),
+    delay: z.number().int().positive().optional()
+}).refine(b => b.message.trim().length > 0 || !!b.media, { message: "message or media is required" });
+
+/**
+ * Queue a broadcast campaign. Sending happens in the background worker, which
+ * survives restarts and applies per-number rate limits. Track progress via the
+ * "broadcast.progress" socket event or GET .../broadcast/history/{broadcastId}.
+ */
 export async function POST(
     request: NextRequest,
     { params }: { params: Promise<{ sessionId: string }> }
@@ -27,158 +44,24 @@ export async function POST(
 
         const parseResult = broadcastBodySchema.safeParse(body);
         if (!parseResult.success) {
-            return NextResponse.json({ error: parseResult.error.flatten() }, { status: 400 });
+            return NextResponse.json({ status: false, message: "Invalid request body", error: parseResult.error.flatten() }, { status: 400 });
         }
-
-        const { recipients, message, delay } = parseResult.data;
 
         const canAccess = await canAccessSession(user.id, user.role, sessionId);
         if (!canAccess) {
             return NextResponse.json({ status: false, message: "Forbidden", error: "Forbidden" }, { status: 403 });
         }
 
-        const instance = waManager.getInstance(sessionId);
-        if (!instance?.socket) {
-            return NextResponse.json({ status: false, message: "Session not ready", error: "Session not ready" }, { status: 503 });
-        }
-
-        // --- Save BroadcastLog & recipients to DB ---
-        const log = await prisma.broadcastLog.create({
-            data: {
-                sessionId,
-                message,
-                total: recipients.length,
-                delay: delay || 2000,
-                status: "running",
-                recipients: {
-                    create: recipients.map(jid => ({
-                        jid,
-                        status: "pending"
-                    }))
-                }
-            },
-            include: { recipients: true }
-        });
-
-        const messageContent: AnyMessageContent = { text: message };
-        const io = (global as any).io;
-        const broadcastId = log.id;
-
-        // Emit initial state
-        if (io) {
-            io.to(sessionId).emit("broadcast.progress", {
-                broadcastId,
-                status: "running",
-                total: recipients.length,
-                sent: 0,
-                failed: 0,
-                current: null,
-                progress: 0,
-                startedAt: log.startedAt.toISOString()
-            });
-        }
-
-        // Process in background — update DB as we go
-        (async () => {
-            let sent = 0;
-            let failed = 0;
-            const errors: { jid: string; error: string }[] = [];
-
-            for (let i = 0; i < recipients.length; i++) {
-                const jid = recipients[i];
-                try {
-                    const targetJid = await resolveRecipientJid(instance.socket!, jid);
-                    const sendResult = await instance.socket!.sendMessage(targetJid, messageContent);
-                    sent++;
-
-                    // Update recipient status in DB (messageId lets late WhatsApp errors flip it to failed)
-                    await prisma.broadcastRecipient.updateMany({
-                        where: { broadcastLogId: broadcastId, jid },
-                        data: { status: "sent", sentAt: new Date(), messageId: sendResult?.key?.id ?? null }
-                    });
-                } catch (e: any) {
-                    failed++;
-                    errors.push({ jid, error: e.message || "Unknown error" });
-                    console.error(`Failed to send broadcast to ${jid}`, e);
-
-                    // Update recipient error in DB
-                    await prisma.broadcastRecipient.updateMany({
-                        where: { broadcastLogId: broadcastId, jid },
-                        data: { status: "failed", error: e.message || "Unknown error" }
-                    });
-                }
-
-                const progress = Math.round(((sent + failed) / recipients.length) * 100);
-
-                // Update BroadcastLog progress in DB
-                await prisma.broadcastLog.update({
-                    where: { id: broadcastId },
-                    data: await countRecipients(broadcastId)
-                });
-
-                // Socket real-time
-                if (io) {
-                    io.to(sessionId).emit("broadcast.progress", {
-                        broadcastId,
-                        status: "running",
-                        total: recipients.length,
-                        sent,
-                        failed,
-                        current: jid,
-                        progress
-                    });
-                }
-
-                // Delay between sends
-                if (i < recipients.length - 1) {
-                    const baseDelay = delay || 2000;
-                    const randomDelay = baseDelay + Math.floor(Math.random() * (baseDelay * 0.5));
-                    await new Promise(r => setTimeout(r, randomDelay));
-                }
-            }
-
-            // Mark as completed in DB
-            await prisma.broadcastLog.update({
-                where: { id: broadcastId },
-                data: { status: "completed", ...(await countRecipients(broadcastId)), completedAt: new Date() }
-            });
-
-            // Final socket emit
-            if (io) {
-                io.to(sessionId).emit("broadcast.progress", {
-                    broadcastId,
-                    status: "completed",
-                    total: recipients.length,
-                    sent,
-                    failed,
-                    errors,
-                    progress: 100,
-                    completedAt: new Date().toISOString()
-                });
-            }
-            console.log(`Broadcast ${broadcastId} completed: ${sent} sent, ${failed} failed out of ${recipients.length}`);
-        })();
+        const { recipients, message, media, delay } = parseResult.data;
+        const result = await createBroadcastCampaign({ sessionId, recipients, message, media, delay });
 
         return NextResponse.json({
             status: true,
-            message: "Broadcast started",
-            data: { broadcastId: log.id, total: recipients.length }
+            message: "Broadcast queued",
+            data: result
         });
-
     } catch (e) {
         console.error("Broadcast error", e);
         return NextResponse.json({ status: false, message: "Failed to start broadcast", error: "Failed to start broadcast" }, { status: 500 });
     }
-}
-
-/**
- * Count sent/failed from recipient rows instead of in-memory counters, so
- * recipients later flipped to "failed" by a WhatsApp ack error stay counted.
- */
-async function countRecipients(broadcastLogId: string) {
-    const [sent, failed] = await Promise.all([
-        prisma.broadcastRecipient.count({ where: { broadcastLogId, status: "sent" } }),
-        prisma.broadcastRecipient.count({ where: { broadcastLogId, status: "failed" } })
-    ]);
-    return { sent, failed };
 }

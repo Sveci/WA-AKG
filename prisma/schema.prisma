@@ -367,8 +367,12 @@ model BroadcastLog {
   total       Int
   sent        Int                 @default(0)
   failed      Int                 @default(0)
-  status      String              @default("running") // running, completed, cancelled
-  delay       Int                 @default(2000)
+  status      String              @default("running") // running, paused, completed, cancelled
+  delay       Int                 @default(12000)
+  mediaUrl    String?             @db.Text
+  mediaType   String?             // image, video, document
+  fileName    String?
+  pauseReason String?             @db.Text
   startedAt   DateTime            @default(now())
   completedAt DateTime?
 
@@ -376,19 +380,25 @@ model BroadcastLog {
 
   @@index([sessionId])
   @@index([sessionId, startedAt])
+  @@index([status])
 }
 
 model BroadcastRecipient {
   id              String       @id @default(cuid())
   broadcastLogId  String
   jid             String
-  status          String       @default("pending") // pending, sent, failed
+  status          String       @default("pending") // pending, sending, sent, failed, cancelled
   error           String?      @db.Text
+  variables       Json?        // template variables, e.g. {"nome": "Ana"}
+  hasChat         Boolean      @default(false) // contact has written to us before (safe to message)
+  attempts        Int          @default(0)
   messageId       String?      // WhatsApp message key id, used to match later delivery errors
   sentAt          DateTime?
 
   broadcastLog    BroadcastLog @relation(fields: [broadcastLogId], references: [id], onDelete: Cascade)
 
   @@index([broadcastLogId])
+  @@index([broadcastLogId, status])
   @@index([messageId])
+  @@index([status, sentAt])
 }

@@ -56,6 +56,9 @@ app.prepare().then(() => {
   // Start Scheduler
   import("../modules/whatsapp/scheduler").then(m => m.startScheduler());
 
+  // Start persistent broadcast queue worker
+  import("../modules/whatsapp/broadcast-queue").then(m => m.startBroadcastWorker());
+
   // Cloudflare 520 Fix: increase keep-alive timeout so Node doesn't kill idle connections that Cloudflare expects to reuse
   // See: https://github.com/vercel/next.js/issues/48962
   server.keepAliveTimeout = 120 * 1000; // 120 seconds

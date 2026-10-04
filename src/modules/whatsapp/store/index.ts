@@ -193,6 +193,11 @@ export const bindSessionStore = (sock: WASocket, sessionId: string, io: Server |
                 if (error) {
                     logger.warn("Store", `Message ${keyId} to ${update.key?.remoteJid} rejected by WhatsApp (${error.code}): ${error.reason}`);
                     await markBroadcastRecipientFailed(keyId, `${error.code}: ${error.reason}`);
+                    if (error.code === '463') {
+                        // Keep sending would deepen the restriction: stop this number's campaigns
+                        const { pauseSessionCampaigns } = await import("../broadcast-queue");
+                        await pauseSessionCampaigns(sessionId, `WhatsApp error 463: ${error.reason}`);
+                    }
                 }
 
                 // Dispatch webhook for message status update
@@ -619,14 +624,8 @@ async function markBroadcastRecipientFailed(messageId: string, error: string) {
             where: { id: recipient.id },
             data: { status: 'failed', error }
         });
-        const [sent, failed] = await Promise.all([
-            prisma.broadcastRecipient.count({ where: { broadcastLogId: recipient.broadcastLogId, status: 'sent' } }),
-            prisma.broadcastRecipient.count({ where: { broadcastLogId: recipient.broadcastLogId, status: 'failed' } })
-        ]);
-        await prisma.broadcastLog.update({
-            where: { id: recipient.broadcastLogId },
-            data: { sent, failed }
-        });
+        const { syncCounters } = await import("../broadcast-queue");
+        await syncCounters(recipient.broadcastLogId);
     } catch (e) {
         logger.error("Store", "Error marking broadcast recipient as failed", e);
     }
