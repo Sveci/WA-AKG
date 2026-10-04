@@ -9,6 +9,7 @@ import { Server } from "socket.io";
 import { setupSocket } from "./socket";
 import { waManager } from "../modules/whatsapp/manager";
 import { logger } from "../lib/logger";
+import { API_KEY_PREFIX, checkApiKeyRequest } from "../lib/api-keys";
 import pkg from "../../package.json";
 
 const dev = process.env.NODE_ENV !== "production";
@@ -28,6 +29,19 @@ app.prepare().then(() => {
     try {
       if (!req.url) return;
       const parsedUrl = parse(req.url, true);
+
+      // Per-integration API keys: enforce scopes and session limits before any route runs
+      const apiKey = req.headers["x-api-key"];
+      if (typeof apiKey === "string" && apiKey.startsWith(API_KEY_PREFIX) && parsedUrl.pathname?.startsWith("/api/")) {
+        const check = await checkApiKeyRequest(req.method || "GET", parsedUrl.pathname, apiKey);
+        if (!check.ok) {
+          res.statusCode = check.status;
+          res.setHeader("Content-Type", "application/json");
+          res.end(JSON.stringify({ status: false, message: check.message, error: check.message }));
+          return;
+        }
+      }
+
       await handle(req, res, parsedUrl);
     } catch (err) {
       logger.error("Server", "Error handling", req.url, err);

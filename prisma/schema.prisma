@@ -47,6 +47,7 @@ model User {
   
   sessions  Session[]
   webhooks  Webhook[]
+  apiKeys   ApiKey[]
   notifications Notification[]
   sessionAccesses SessionAccess[]
 }
@@ -426,4 +427,23 @@ model BroadcastRecipient {
   @@index([broadcastLogId, status])
   @@index([messageId])
   @@index([status, sentAt])
+}
+
+/// Per-integration API keys (e.g. one for the CRM, one for n8n). Only the SHA-256 hash is stored.
+model ApiKey {
+  id         String    @id @default(cuid())
+  userId     String
+  name       String
+  prefix     String    // first characters of the key, shown in the dashboard
+  keyHash    String    @unique
+  scopes     Json      // e.g. ["read", "send"] or ["*"]
+  sessionIds Json?     // WhatsApp sessionIds this key may use; null = all sessions the user can access
+  lastUsedAt DateTime?
+  expiresAt  DateTime?
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
