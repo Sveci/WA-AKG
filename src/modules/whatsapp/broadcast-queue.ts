@@ -288,6 +288,7 @@ async function emitProgress(broadcastId: string, extra: Record<string, unknown> 
     const done = log.sent + log.failed + cancelled;
     io.to(log.sessionId).emit("broadcast.progress", {
         broadcastId,
+        sessionId: log.sessionId,
         status: log.status,
         total: log.total,
         sent: log.sent,

@@ -17,6 +17,7 @@ import { useSocket } from "@/components/chat/socket-context";
 
 interface BroadcastProgress {
     broadcastId: string;
+    sessionId?: string;
     status: "running" | "paused" | "completed" | "cancelled";
     total: number;
     pending?: number;
@@ -87,6 +88,8 @@ export default function BroadcastPage() {
         socket.on("connect", onConnect);
 
         const handler = (data: BroadcastProgress) => {
+            // The socket stays in rooms of previously selected numbers: ignore their campaigns
+            if (data.sessionId && data.sessionId !== sessionId) return;
             setBroadcastProgress(prev => (prev && prev.broadcastId === data.broadcastId && !data.note && prev.note && data.status === "running")
                 ? { ...data, note: undefined }
                 : data);
