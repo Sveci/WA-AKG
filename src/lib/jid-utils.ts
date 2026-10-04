@@ -181,6 +181,24 @@ const recipientCache = new Map<string, { jid: string; expiresAt: number }>();
 const RECIPIENT_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
 /**
+ * Digits of a phone number, with the default country code added to numbers
+ * typed in national format. Only raw input (no "@") is treated as national:
+ * full JIDs come from WhatsApp itself and are already international.
+ *
+ * With DEFAULT_COUNTRY_CODE=55 (default), 10-11 digits = DDD + number, so
+ * "61985850383" becomes "5561985850383" instead of being read as +61 (Australia).
+ */
+export function normalizePhoneDigits(input: string): string {
+    const raw = (input || "").trim();
+    const digits = raw.split("@")[0].split(":")[0].replace(/\D/g, "").replace(/^0+/, "");
+    const countryCode = (process.env.DEFAULT_COUNTRY_CODE ?? "55").replace(/\D/g, "");
+    if (!raw.includes("@") && countryCode === "55" && (digits.length === 10 || digits.length === 11)) {
+        return `55${digits}`;
+    }
+    return digits;
+}
+
+/**
  * Brazilian mobile numbers may be registered on WhatsApp with or without the
  * extra "9" digit. Returns both variants so we can ask WhatsApp which exists.
  */
@@ -210,7 +228,7 @@ export async function resolveRecipientJid(
     const raw = (input || "").trim();
     if (/@(g\.us|lid|broadcast|newsletter)$/.test(raw)) return raw;
 
-    const digits = raw.split("@")[0].split(":")[0].replace(/\D/g, "");
+    const digits = normalizePhoneDigits(raw);
     if (digits.length < 8) {
         throw new Error(`Invalid recipient: "${input}"`);
     }

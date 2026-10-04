@@ -159,10 +159,8 @@ export default function BroadcastPage() {
         setBroadcastProgress(null);
 
         try {
-            const recipients = contacts.split(/[\n,]+/).map(s => s.trim()).filter(Boolean).map(s => {
-                if (!s.includes('@')) return `${s}@s.whatsapp.net`;
-                return s;
-            });
+            // Send numbers as typed: the server adds the country code and resolves the real WhatsApp JID
+            const recipients = contacts.split(/[\n,;]+/).map(s => s.trim()).filter(Boolean);
 
             if (recipients.length === 0) {
                 toast.error("No recipients specified");
@@ -213,7 +211,7 @@ export default function BroadcastPage() {
         }
     };
 
-    const recipientCount = contacts.split(/[\n,]+/).map(s => s.trim()).filter(Boolean).length;
+    const recipientCount = contacts.split(/[\n,;]+/).map(s => s.trim()).filter(Boolean).length;
     const formatJid = (jid: string) => {
         if (!jid) return "-";
         return jid.replace("@s.whatsapp.net", "").replace("@g.us", " (Group)");
@@ -262,13 +260,13 @@ export default function BroadcastPage() {
                             <Card>
                                 <CardHeader>
                                     <CardTitle>Recipients</CardTitle>
-                                    <CardDescription>Enter phone numbers separated by comma or new line.</CardDescription>
+                                    <CardDescription>One number per line (or comma separated). Numbers without country code are treated as Brazilian (DDD + number).</CardDescription>
                                 </CardHeader>
                                 <CardContent className="space-y-4">
                                     <div className="space-y-2">
-                                        <Label>Target Numbers (e.g., 628123456789)</Label>
+                                        <Label>Target Numbers (e.g., 61999998888 or 5561999998888)</Label>
                                         <Textarea
-                                            placeholder={"628123456789\n628987654321"}
+                                            placeholder={"61999998888\n5511988887777"}
                                             className="min-h-[200px] font-mono text-sm"
                                             value={contacts}
                                             onChange={e => setContacts(e.target.value)}

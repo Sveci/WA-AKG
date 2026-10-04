@@ -2,7 +2,7 @@ import { prisma } from "@/lib/prisma";
 import type { BroadcastLog } from "@prisma/client";
 import type { Server } from "socket.io";
 import { logger } from "@/lib/logger";
-import { resolveRecipientJid } from "@/lib/jid-utils";
+import { resolveRecipientJid, normalizePhoneDigits } from "@/lib/jid-utils";
 import { waManager } from "./manager";
 import { ChatService } from "./chat.service";
 
@@ -116,7 +116,7 @@ function recipientToEntry(r: BroadcastRecipientInput): { jid: string; variables?
 /** Phone-number JID variants (with/without Brazilian 9th digit) used to look up chat history */
 function phoneJidVariants(input: string): string[] {
     if (/@(g\.us|lid|broadcast|newsletter)$/.test(input)) return [input];
-    const digits = input.split("@")[0].split(":")[0].replace(/\D/g, "");
+    const digits = normalizePhoneDigits(input);
     if (!digits) return [];
     const out = new Set([digits]);
     if (digits.startsWith("55")) {
