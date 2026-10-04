@@ -373,6 +373,7 @@ model BroadcastLog {
   mediaType   String?             // image, video, document
   fileName    String?
   pauseReason String?             @db.Text
+  waitingReason String?           @db.Text // why a running campaign is not sending right now
   startedAt   DateTime            @default(now())
   completedAt DateTime?
 

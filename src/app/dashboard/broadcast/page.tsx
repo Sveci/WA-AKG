@@ -41,6 +41,7 @@ interface BroadcastLog {
     failed: number;
     status: string;
     pauseReason?: string | null;
+    waitingReason?: string | null;
     delay: number;
     startedAt: string;
     completedAt: string | null;
@@ -183,6 +184,7 @@ export default function BroadcastPage() {
 
             if (res.ok) {
                 toast.info(`Broadcast queued for ${data.data?.total ?? recipients.length} recipients (${data.data?.withExistingChat ?? 0} with existing chat)`);
+                if (data.data?.notice) toast.warning(data.data.notice, { duration: 10000 });
             } else {
                 toast.error(data.message || "Failed to start broadcast");
                 setLoading(false);
@@ -517,6 +519,11 @@ export default function BroadcastPage() {
                                                 </div>
                                                 {log.status === "paused" && log.pauseReason && (
                                                     <p className="text-xs text-yellow-600 mt-1 truncate">{log.pauseReason}</p>
+                                                )}
+                                                {log.status === "running" && log.waitingReason && (
+                                                    <p className="text-xs text-muted-foreground mt-1 flex items-center gap-1 truncate">
+                                                        <Clock className="h-3 w-3 shrink-0" /> Waiting: {log.waitingReason}
+                                                    </p>
                                                 )}
                                             </div>
 

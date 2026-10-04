@@ -200,8 +200,23 @@ export async function createBroadcastCampaign(params: {
     }
 
     logger.info("Broadcast", `Campaign ${log.id} queued: ${unique.length} recipients (${withChat.size} with existing chat), delay ${delay}ms`);
+
+    // Tell the caller up front if the campaign cannot start right away
+    const [limits, tz] = await Promise.all([getBroadcastLimits(params.sessionId), getTimezone()]);
+    const { hour } = localClock(tz);
+    let notice: string | undefined;
+    if (hour < limits.hoursStart || hour >= limits.hoursEnd) {
+        notice = `Outside sending hours (${limits.hoursStart}h-${limits.hoursEnd}h ${tz}); sending starts at ${limits.hoursStart}h`;
+    } else if (limits.newChatDailyLimit === 0 && withChat.size === 0) {
+        notice = "New-chat limit is 0 and no recipient has written to this number before; nothing will be sent";
+    }
+    if (notice) {
+        await prisma.broadcastLog.update({ where: { id: log.id }, data: { waitingReason: notice } });
+        lastNote.set(log.id, notice);
+    }
+
     await emitProgress(log.id);
-    return { broadcastId: log.id, total: unique.length, withExistingChat: withChat.size };
+    return { broadcastId: log.id, total: unique.length, withExistingChat: withChat.size, notice };
 }
 
 // ---------------------------------------------------------------------------
@@ -281,6 +296,7 @@ async function emitProgress(broadcastId: string, extra: Record<string, unknown> 
         pending,
         progress: log.total ? Math.round((done / log.total) * 100) : 100,
         pauseReason: log.pauseReason,
+        note: log.status === "running" ? (log.waitingReason ?? undefined) : undefined,
         startedAt: log.startedAt.toISOString(),
         completedAt: log.completedAt?.toISOString(),
         ...extra,
@@ -292,6 +308,7 @@ async function noteWaiting(broadcastId: string, note: string) {
     if (lastNote.get(broadcastId) === note) return;
     lastNote.set(broadcastId, note);
     logger.info("Broadcast", `Campaign ${broadcastId} waiting: ${note}`);
+    await prisma.broadcastLog.update({ where: { id: broadcastId }, data: { waitingReason: note } }).catch(() => {});
     await emitProgress(broadcastId, { note });
 }
 
@@ -365,7 +382,7 @@ async function completeIfDone(logId: string): Promise<boolean> {
     if (remaining > 0) return false;
     const res = await prisma.broadcastLog.updateMany({
         where: { id: logId, status: "running" },
-        data: { status: "completed", completedAt: new Date() },
+        data: { status: "completed", completedAt: new Date(), waitingReason: null },
     });
     if (res.count) {
         const { sent, failed } = await syncCounters(logId);
@@ -421,6 +438,9 @@ async function processSession(sessionId: string, campaigns: BroadcastLog[]) {
         }
 
         lastNote.delete(campaign.id);
+        if (campaign.waitingReason) {
+            await prisma.broadcastLog.update({ where: { id: campaign.id }, data: { waitingReason: null } });
+        }
         await sendOne(sessionId, campaign, next.id);
 
         const base = campaign.delay || DEFAULT_DELAY_MS;
