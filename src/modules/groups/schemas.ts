@@ -29,14 +29,7 @@ export const actionSchema = z.discriminatedUnion("type", [
     z.object({ type: z.literal("stop") }),
 ]);
 
-/** Body of POST/PATCH /api/groups/{sessionId}/automations */
-export const automationSchema = z.object({
-    name: z.string().min(1).max(100),
-    active: z.boolean().optional(),
-    priority: z.number().int().min(0).max(10000).optional(),
-    scope: z.object({ all: z.boolean().optional(), tags: z.array(z.string()).optional(), jids: z.array(z.string()).optional() }),
-    trigger: z.enum(["member_join", "member_leave", "message", "schedule"]),
-    triggerConfig: z.object({
+const triggerConfigSchema = z.object({
         match: z.enum(["any", "contains", "exact", "starts_with", "regex", "link", "invite_link", "flood"]).optional(),
         keywords: z.array(z.string().min(1)).max(500).optional(),
         pattern: z.string().max(500).optional(),
@@ -44,11 +37,23 @@ export const automationSchema = z.object({
         maxMessages: z.number().int().min(2).max(100).optional(),
         perSeconds: z.number().int().min(1).max(3600).optional(),
         cron: z.string().max(100).optional(),
-    }).default({}),
+    });
+
+/** Body of POST /api/groups/{sessionId}/automations */
+export const automationSchema = z.object({
+    name: z.string().min(1).max(100),
+    active: z.boolean().optional(),
+    priority: z.number().int().min(0).max(10000).optional(),
+    scope: z.object({ all: z.boolean().optional(), tags: z.array(z.string()).optional(), jids: z.array(z.string()).optional() }),
+    trigger: z.enum(["member_join", "member_leave", "message", "schedule"]),
+    triggerConfig: triggerConfigSchema.default({}),
     actions: z.array(actionSchema).min(1).max(20),
     ignoreAdmins: z.boolean().optional(),
     cooldownSec: z.number().int().min(0).max(86400).optional(),
 });
+
+/** Body of PATCH: every field optional, and no defaults (a missing triggerConfig must not wipe the stored one) */
+export const automationPatchSchema = automationSchema.extend({ triggerConfig: triggerConfigSchema.optional() }).partial();
 
 /** Semantic checks zod can't express */
 export function validateAutomation(body: { trigger: string; triggerConfig: { cron?: string; match?: string; pattern?: string; keywords?: string[] } }) {

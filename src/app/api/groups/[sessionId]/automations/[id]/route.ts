@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { withSession, readJson } from "@/lib/route-helpers";
 import { dbSession, GroupError } from "@/modules/groups/service";
-import { automationSchema, validateAutomation } from "@/modules/groups/schemas";
+import { automationPatchSchema, validateAutomation } from "@/modules/groups/schemas";
 
 type P = { params: Promise<{ sessionId: string; id: string }> };
 
@@ -18,7 +18,7 @@ export async function PATCH(request: NextRequest, { params }: P) {
     const { sessionId, id } = await params;
     return withSession(request, sessionId, async () => {
         const current = await find(sessionId, id);
-        const body = automationSchema.partial().parse(await readJson(request));
+        const body = automationPatchSchema.parse(await readJson(request));
         validateAutomation({
             trigger: body.trigger ?? current.trigger,
             triggerConfig: (body.triggerConfig ?? current.triggerConfig) as { cron?: string; match?: string; pattern?: string; keywords?: string[] },
