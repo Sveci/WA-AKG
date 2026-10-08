@@ -5,6 +5,8 @@ import { logger } from "@/lib/logger";
 import { resolveRecipientJid, normalizePhoneDigits } from "@/lib/jid-utils";
 import { waManager } from "./manager";
 import { ChatService } from "./chat.service";
+import { activeMemberJids } from "@/modules/groups/service";
+import { bareJid } from "@/modules/groups/sync";
 
 /**
  * Persistent broadcast queue.
@@ -159,8 +161,14 @@ export async function createBroadcastCampaign(params: {
     message: string;
     media?: BroadcastMedia;
     delay?: number;
+    name?: string;
+    scheduledAt?: Date | null;
+    mentionAll?: boolean;
+    respectHours?: boolean;
+    sequenceId?: string;
 }) {
     const entries = params.recipients.map(recipientToEntry).filter((e): e is NonNullable<typeof e> => !!e);
+    const isGroupCampaign = entries.length > 0 && entries.every(e => e.jid.endsWith("@g.us"));
 
     // De-duplicate by normalized number
     const seen = new Set<string>();
@@ -171,8 +179,11 @@ export async function createBroadcastCampaign(params: {
         return true;
     });
 
+    // Groups we are in are never "new chats"
     const withChat = await findRecipientsWithChat(params.sessionId, unique.map(e => e.jid));
+    for (const e of unique) if (e.jid.endsWith("@g.us")) withChat.add(e.jid);
     const delay = Math.max(MIN_DELAY_MS, params.delay ?? DEFAULT_DELAY_MS);
+    const respectHours = params.respectHours ?? !isGroupCampaign;
 
     const log = await prisma.broadcastLog.create({
         data: {
@@ -184,6 +195,12 @@ export async function createBroadcastCampaign(params: {
             total: unique.length,
             delay,
             status: "running",
+            name: params.name,
+            kind: isGroupCampaign ? "groups" : "contacts",
+            scheduledAt: params.scheduledAt ?? null,
+            mentionAll: !!params.mentionAll,
+            respectHours,
+            sequenceId: params.sequenceId,
         },
     });
 
@@ -205,7 +222,9 @@ export async function createBroadcastCampaign(params: {
     const [limits, tz] = await Promise.all([getBroadcastLimits(params.sessionId), getTimezone()]);
     const { hour } = localClock(tz);
     let notice: string | undefined;
-    if (hour < limits.hoursStart || hour >= limits.hoursEnd) {
+    if (params.scheduledAt && params.scheduledAt > new Date()) {
+        notice = `Scheduled for ${params.scheduledAt.toISOString()}`;
+    } else if (respectHours && (hour < limits.hoursStart || hour >= limits.hoursEnd)) {
         notice = `Outside sending hours (${limits.hoursStart}h-${limits.hoursEnd}h ${tz}); sending starts at ${limits.hoursStart}h`;
     } else if (limits.newChatDailyLimit === 0 && withChat.size === 0) {
         notice = "New-chat limit is 0 and no recipient has written to this number before; nothing will be sent";
@@ -360,7 +379,14 @@ async function sendOne(sessionId: string, log: BroadcastLog, recipientId: string
     const instance = waManager.getInstance(sessionId);
     try {
         const jid = await resolveRecipientJid(instance!.socket!, recipient.jid);
-        const result = await ChatService.sendTextMessage(sessionId, jid, buildPayload(log, recipient.variables));
+        const payload: Record<string, unknown> = buildPayload(log, recipient.variables);
+        let mentions: string[] | undefined;
+        if (log.mentionAll && jid.endsWith("@g.us")) {
+            const self = new Set([bareJid(instance!.socket!.user?.id), bareJid((instance!.socket!.user as { lid?: string } | undefined)?.lid)]);
+            mentions = (await activeMemberJids(sessionId, jid)).filter(m => !self.has(bareJid(m)));
+            payload.mentions = mentions;
+        }
+        const result = await ChatService.sendTextMessage(sessionId, jid, payload, mentions);
         await prisma.broadcastRecipient.update({
             where: { id: recipientId },
             data: { status: "sent", sentAt: new Date(), messageId: result?.key?.id ?? null, error: null },
@@ -401,11 +427,26 @@ async function processSession(sessionId: string, campaigns: BroadcastLog[]) {
         return;
     }
 
+    // Scheduled campaigns wait for their time
+    const now = new Date();
+    const due: BroadcastLog[] = [];
+    for (const c of campaigns) {
+        if (c.scheduledAt && c.scheduledAt > now) await noteWaiting(c.id, `Scheduled for ${c.scheduledAt.toISOString()}`);
+        else due.push(c);
+    }
+    if (!due.length) return;
+
     const [limits, tz] = await Promise.all([getBroadcastLimits(sessionId), getTimezone()]);
     const { hour, startOfDay } = localClock(tz);
-    if (hour < limits.hoursStart || hour >= limits.hoursEnd) {
-        for (const c of campaigns) await noteWaiting(c.id, `Outside sending hours (${limits.hoursStart}h-${limits.hoursEnd}h ${tz})`);
-        return;
+    const inHours = hour >= limits.hoursStart && hour < limits.hoursEnd;
+    if (!inHours) {
+        for (const c of due) {
+            if (c.respectHours) await noteWaiting(c.id, `Outside sending hours (${limits.hoursStart}h-${limits.hoursEnd}h ${tz})`);
+        }
+        campaigns = due.filter(c => !c.respectHours);
+        if (!campaigns.length) return;
+    } else {
+        campaigns = due;
     }
 
     const sentTodayWhere = {

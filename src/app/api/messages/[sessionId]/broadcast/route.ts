@@ -21,7 +21,11 @@ const broadcastBodySchema = z.object({
         url: z.string().url(),
         fileName: z.string().optional()
     }).optional(),
-    delay: z.number().int().positive().optional()
+    delay: z.number().int().positive().optional(),
+    name: z.string().max(100).optional(),
+    scheduledAt: z.string().datetime({ offset: true }).optional(),
+    mentionAll: z.boolean().optional(),
+    respectHours: z.boolean().optional()
 }).refine(b => b.message.trim().length > 0 || !!b.media, { message: "message or media is required" });
 
 /**
@@ -52,8 +56,11 @@ export async function POST(
             return NextResponse.json({ status: false, message: "Forbidden", error: "Forbidden" }, { status: 403 });
         }
 
-        const { recipients, message, media, delay } = parseResult.data;
-        const result = await createBroadcastCampaign({ sessionId, recipients, message, media, delay });
+        const { recipients, message, media, delay, name, scheduledAt, mentionAll, respectHours } = parseResult.data;
+        const result = await createBroadcastCampaign({
+            sessionId, recipients, message, media, delay, name, mentionAll, respectHours,
+            scheduledAt: scheduledAt ? new Date(scheduledAt) : null,
+        });
 
         return NextResponse.json({
             status: true,

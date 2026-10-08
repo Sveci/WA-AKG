@@ -409,6 +409,12 @@ model BroadcastLog {
   fileName    String?
   pauseReason String?             @db.Text
   waitingReason String?           @db.Text // why a running campaign is not sending right now
+  name        String?             // label, e.g. "Aula 1 - lembrete"
+  kind        String              @default("contacts") // contacts | groups
+  scheduledAt DateTime?           // do not start before this time
+  mentionAll  Boolean             @default(false) // groups: mention every member (@todos)
+  respectHours Boolean            @default(true)  // apply BROADCAST_HOURS window
+  sequenceId  String?             // campaigns created together as a sequence
   startedAt   DateTime            @default(now())
   completedAt DateTime?
 
