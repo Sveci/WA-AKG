@@ -1,5 +1,6 @@
 import type { WAMessage, WASocket } from "@whiskeysockets/baileys";
 import { recordGroupMessage } from "./sync";
+import { runMessageAutomations } from "./automations";
 
 /**
  * Called for every new (notify) group message after it is stored.
@@ -15,4 +16,5 @@ export async function onGroupMessage(sock: WASocket, sessionId: string, dbSessio
     const participant = msg.key.participant || msg.participant || null;
     const at = msg.messageTimestamp ? new Date(Number(msg.messageTimestamp) * 1000) : new Date();
     await recordGroupMessage(dbSessionId, groupJid, participant, msg.pushName, at);
+    await runMessageAutomations(sock, sessionId, dbSessionId, msg);
 }

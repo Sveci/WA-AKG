@@ -538,3 +538,24 @@ model GroupLinkClick {
   @@index([linkId, createdAt])
 }
 
+/// Group automation rule: trigger -> actions, scoped to all groups, tags or specific groups
+model GroupAutomation {
+  id            String    @id @default(cuid())
+  sessionId     String    // Session.id (cuid)
+  name          String
+  active        Boolean   @default(true)
+  priority      Int       @default(100) // lower runs first; a "stop" action ends the chain
+  scope         Json      // { all?: true, tags?: [], jids?: [] }
+  trigger       String    // member_join | member_leave | message | schedule
+  triggerConfig Json      // see modules/groups/automations.ts
+  actions       Json      // [{ type: "send_message", text: "..." }, ...]
+  ignoreAdmins  Boolean   @default(true)
+  cooldownSec   Int       @default(0)   // min seconds between runs per group+member
+  runs          Int       @default(0)
+  lastRunAt     DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([sessionId, trigger, active])
+}
+

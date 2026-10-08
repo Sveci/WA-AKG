@@ -80,6 +80,9 @@ app.prepare().then(() => {
   // Start persistent broadcast queue worker
   import("../modules/whatsapp/broadcast-queue").then(m => m.startBroadcastWorker());
 
+  // Start scheduled group automations (open/close group, recurring posts)
+  import("../modules/groups/automations").then(m => m.startAutomationScheduler());
+
   // Start webhook outbox worker (retries failed deliveries)
   import("../lib/webhook-delivery").then(m => m.startWebhookWorker());
 

@@ -9,6 +9,7 @@ import { Server } from "socket.io";
 import { logger } from "@/lib/logger";
 import { handleParticipantsUpdate, handleGroupsUpsert, handleJoinRequest } from "@/modules/groups/sync";
 import { onGroupMessage } from "@/modules/groups/hooks";
+import { runMemberAutomations } from "@/modules/groups/automations";
 
 export const bindSessionStore = (sock: WASocket, sessionId: string, io: Server | null) => {
     // Set start time for uptime command
@@ -286,6 +287,13 @@ export const bindSessionStore = (sock: WASocket, sessionId: string, io: Server |
             
             // Members, roles and join/leave history (also refreshes group metadata)
             handleParticipantsUpdate(sock, sessionId, update as any)
+                .then(() => {
+                    // Welcome / goodbye automations, after the member rows exist
+                    if (update.action === "add" || update.action === "remove") {
+                        const people = (update.participants as any[]).map(p => (typeof p === "string" ? { id: p } : p));
+                        return runMemberAutomations(sock, sessionId, update.id, update.action, people);
+                    }
+                })
                 .catch(e => logger.error("Groups", "Failed to handle participants update", e));
         } catch (e) {
             logger.error("Store", "Error in group-participants.update handling", e);
