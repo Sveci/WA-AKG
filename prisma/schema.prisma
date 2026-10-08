@@ -502,3 +502,39 @@ model GroupEvent {
   @@index([sessionId, groupJid, createdAt])
   @@index([sessionId, type, createdAt])
 }
+
+/// Smart invite link: one public URL that sends each visitor to the next group with room
+model GroupLink {
+  id             String   @id @default(cuid())
+  sessionId      String   // Session.id (cuid)
+  slug           String   @unique
+  name           String
+  groupJids      Json     // ordered list of group JIDs
+  maxMembers     Int      @default(1000) // consider a group full at this size (WhatsApp max is 1024)
+  strategy       String   @default("fill") // fill = first with room, balance = smallest group
+  autoCreate     Boolean  @default(false)  // create the next group when all are full
+  autoCreateName String?  // subject template, "{{name}} #{{n}}"
+  autoCreateTags Json?    // tags for auto-created groups
+  fallbackUrl    String?  @db.Text // where to send people if no group is available
+  active         Boolean  @default(true)
+  clicks         Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([sessionId])
+}
+
+model GroupLinkClick {
+  id          String   @id @default(cuid())
+  linkId      String
+  groupJid    String?
+  utmSource   String?
+  utmMedium   String?
+  utmCampaign String?
+  utmContent  String?
+  referrer    String?  @db.Text
+  createdAt   DateTime @default(now())
+
+  @@index([linkId, createdAt])
+}
+
