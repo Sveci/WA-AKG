@@ -7,6 +7,8 @@ import { resolveToPhoneJid, isLidJid, normalizeJid } from "@/lib/jid-utils";
 
 import { Server } from "socket.io";
 import { logger } from "@/lib/logger";
+import { handleParticipantsUpdate, handleGroupsUpsert, handleJoinRequest } from "@/modules/groups/sync";
+import { onGroupMessage } from "@/modules/groups/hooks";
 
 export const bindSessionStore = (sock: WASocket, sessionId: string, io: Server | null) => {
     // Set start time for uptime command
@@ -66,6 +68,12 @@ export const bindSessionStore = (sock: WASocket, sessionId: string, io: Server |
                 const savedMessage = await processAndSaveMessage(msg, dbSessionId, sessionId, type === 'notify', sock, config, io);
                 if (savedMessage) {
                     processedMessages.push(savedMessage);
+                }
+
+                // Group activity counters (+ group automations)
+                if (type === 'notify' && savedMessage && msg.key.remoteJid?.endsWith('@g.us')) {
+                    onGroupMessage(sock, sessionId, dbSessionId, msg)
+                        .catch(e => logger.error("Groups", "Group message hook failed", e));
                 }
 
                 // Execute Bot Commands (Only for Notify / New Messages)
@@ -249,6 +257,19 @@ export const bindSessionStore = (sock: WASocket, sessionId: string, io: Server |
         }
     });
 
+    // This number joined or created a group
+    sock.ev.on('groups.upsert', async (groups) => {
+        handleGroupsUpsert(sock, sessionId, groups)
+            .catch(e => logger.error("Groups", "Failed to handle groups.upsert", e));
+        for (const g of groups) dispatchWebhook(sessionId, "group.joined", { jid: g.id, subject: g.subject, size: g.size ?? g.participants?.length });
+    });
+
+    // Someone asked to join a group that requires approval
+    sock.ev.on('group.join-request', async (req) => {
+        handleJoinRequest(sessionId, req as any).catch(e => logger.error("Groups", "Failed to handle join request", e));
+        dispatchWebhook(sessionId, "group.join_request", req);
+    });
+
     // Handle Group Participants Update
     sock.ev.on('group-participants.update', async (update) => {
         if (!dbSessionId || !update.id) return;
@@ -263,16 +284,9 @@ export const bindSessionStore = (sock: WASocket, sessionId: string, io: Server |
                 participants: update.participants
             });
             
-            // To properly resync the group participants in DB, it's safer to re-fetch the entire group metadata
-            // But we don't await strictly to not block the socket
-            sock.groupMetadata(update.id).then(async (g) => {
-                await prisma.group.updateMany({
-                    where: { sessionId: dbSessionId as string, jid: update.id as string },
-                    data: { participants: g.participants as any }
-                });
-            }).catch(e => {
-                 logger.debug("Store", "Failed to refresh group participants metadata", e);
-            });
+            // Members, roles and join/leave history (also refreshes group metadata)
+            handleParticipantsUpdate(sock, sessionId, update as any)
+                .catch(e => logger.error("Groups", "Failed to handle participants update", e));
         } catch (e) {
             logger.error("Store", "Error in group-participants.update handling", e);
         }

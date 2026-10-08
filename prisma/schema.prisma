@@ -139,6 +139,16 @@ model Group {
   // Community Features
   isCommunity Boolean  @default(false)
   linkedParentJid String? // JID of the community parent group if it belongs to one
+
+  // Groups module
+  size             Int?      // participant count
+  myRole           String?   // member, admin, superadmin (this number's role in the group)
+  memberAddMode    Boolean?  // true = all members can add participants
+  joinApprovalMode Boolean?  // true = admins must approve join requests
+  ephemeralDuration Int?
+  tags             Json?     // ["clientes", "lancamento-out"] for filtering and targeting
+  notes            String?   @db.Text
+  lastActivityAt   DateTime?
   
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -446,4 +456,43 @@ model ApiKey {
   user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+}
+
+
+/// One row per (group, member) as seen by a session; kept after the member leaves (isActive=false)
+model GroupMember {
+  id            String    @id @default(cuid())
+  sessionId     String    // Session.id (cuid)
+  groupJid      String
+  memberJid     String    // as reported by WhatsApp (@s.whatsapp.net or @lid)
+  phone         String?   // phone digits when known
+  name          String?   // last push name seen
+  role          String    @default("member") // member, admin, superadmin
+  isActive      Boolean   @default(true)
+  joinedAt      DateTime?
+  leftAt        DateTime?
+  messageCount  Int       @default(0)
+  lastMessageAt DateTime?
+  warnings      Int       @default(0) // moderation strikes
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([sessionId, groupJid, memberJid])
+  @@index([sessionId, groupJid, isActive])
+  @@index([sessionId, memberJid])
+}
+
+/// Membership and moderation history, for analytics and audit
+model GroupEvent {
+  id        String   @id @default(cuid())
+  sessionId String   // Session.id (cuid)
+  groupJid  String
+  type      String   // join, leave, removed, promote, demote, join_request, moderation
+  memberJid String?
+  actorJid  String?
+  details   Json?
+  createdAt DateTime @default(now())
+
+  @@index([sessionId, groupJid, createdAt])
+  @@index([sessionId, type, createdAt])
 }

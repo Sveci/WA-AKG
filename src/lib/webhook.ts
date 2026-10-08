@@ -19,6 +19,9 @@ export type WebhookEventType =
     | "contact.update"
     | "status.update"
     | "group.participant"
+    | "group.joined"
+    | "group.join_request"
+    | "group.automation"
     | "message.deleted"
     | "message.edited"
     | "test";
