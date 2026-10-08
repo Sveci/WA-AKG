@@ -134,6 +134,8 @@ export function requiredScope(method: string, pathname: string): Exclude<ApiKeyS
     if (isRead) return "read";
     if (resource === "sessions") return seg[3] === "bot-config" ? "manage" : "admin";
     if (resource === "chat" && seg[3] === "check") return "read";
+    if (resource === "groups" && seg[4] === "send") return "send";
+    if (resource === "groups" && seg[3] === "broadcast") return "broadcast";
     if (["messages", "chat", "scheduler", "media"].includes(resource)) return "send";
     return "manage";
 }
